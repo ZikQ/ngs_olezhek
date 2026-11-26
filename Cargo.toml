@@ -1,0 +1,37 @@
+[package]
+name = "ngs_olezhek"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["bundle", "macros", "runtime"]
+
+[workspace.dependencies]
+omnilua = { version = "=0.7.2", default-features = false }
+
+[dependencies]
+axum = { version = "0.8.9", features = ["ws"] }
+ngs_olezhek_bundle = { path = "bundle" }
+ngs_olezhek_macros = { path = "macros" }
+notify = "9"
+omnilua = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net"] }
+tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
+
+[dev-dependencies]
+# tests/prelude.rs runs the browser prelude natively, which needs these stdlib parts.
+omnilua = { workspace = true, features = ["coroutine", "debug", "utf8"] }
+tower = { version = "0.5", features = ["util"] }
+
+[[example]]
+name = "hello"
+path = "examples/hello/main.rs"
+
+# Runtime wasm is always built with this profile (see build.rs): debug omnilua is too slow in the browser.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

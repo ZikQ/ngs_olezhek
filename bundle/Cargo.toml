@@ -1,0 +1,7 @@
+[package]
+name = "ngs_olezhek_bundle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+omnilua = { workspace = true }

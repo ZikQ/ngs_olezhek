@@ -1,0 +1,229 @@
+:root {
+  --ngs-bg: #1b1d21;
+  --ngs-fg: #e4e6eb;
+  --ngs-muted: #9aa0aa;
+  --ngs-panel: #25282d;
+  --ngs-input: #15171a;
+  --ngs-button: #33373e;
+  --ngs-button-hover: #3d424a;
+  --ngs-border: #3a3f47;
+  --ngs-accent: #4c8dff;
+  --ngs-radius: 6px;
+  color-scheme: dark;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--ngs-bg);
+  color: var(--ngs-fg);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Every panel is a positioning context so SetPos children and the paint canvas sit inside it;
+   isolation keeps the canvas (z-index -1) above the panel's own background. */
+.ngs {
+  box-sizing: border-box;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex-shrink: 0;
+  isolation: isolate;
+}
+
+.ngs[hidden] { display: none !important; }
+
+.ngs-root { position: fixed; inset: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+.ngs-panel, .ngs-page, .ngs-scroll { display: flex; flex-direction: column; }
+.ngs-page, .ngs-scroll { overflow: auto; }
+
+.ngs-paint {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.ngs-painted { background: none !important; border-color: transparent !important; box-shadow: none !important; }
+
+/* Like vgui labels: text ignores the mouse so clicks reach the panel underneath. */
+.ngs-label { display: flex; align-items: center; white-space: pre; pointer-events: none; }
+
+.ngs-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: auto;
+  font: inherit;
+  color: inherit;
+  white-space: pre;
+  padding: 6px 14px;
+  background: var(--ngs-button);
+  border: 1px solid var(--ngs-border);
+  border-radius: var(--ngs-radius);
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+.ngs-button:hover { background: var(--ngs-button-hover); }
+.ngs-button:active { filter: brightness(0.92); }
+.ngs-button:disabled { opacity: 0.5; cursor: default; }
+.ngs-button:focus-visible, .ngs-link:focus-visible { outline: 2px solid var(--ngs-accent); outline-offset: 1px; }
+
+.ngs-control { font: inherit; color: inherit; box-sizing: border-box; }
+
+.ngs-textentry, .ngs-combobox, .ngs-slider, .ngs-numberwang, .ngs-progress { display: flex; align-items: stretch; }
+
+.ngs-textentry > .ngs-control, .ngs-combobox > .ngs-control, .ngs-numberwang > .ngs-control {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  background: var(--ngs-input);
+  border: 1px solid var(--ngs-border);
+  border-radius: var(--ngs-radius);
+  outline: none;
+}
+.ngs-textentry > .ngs-control:focus, .ngs-combobox > .ngs-control:focus, .ngs-numberwang > .ngs-control:focus {
+  border-color: var(--ngs-accent);
+}
+.ngs-textentry > textarea { resize: none; }
+.ngs-textentry > .ngs-control::placeholder { color: var(--ngs-muted); }
+.ngs-painted > .ngs-control { background: transparent !important; border-color: transparent !important; }
+
+.ngs-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: pre;
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+}
+.ngs-checkbox > input { margin: 0; width: 16px; height: 16px; accent-color: var(--ngs-accent); cursor: pointer; }
+
+.ngs-slider > input { flex: 1; min-width: 0; margin: 0; accent-color: var(--ngs-accent); }
+.ngs-progress { align-items: center; }
+.ngs-progress > progress { flex: 1; width: 100%; height: 8px; accent-color: var(--ngs-accent); }
+
+.ngs-image { display: block; pointer-events: none; }
+
+.ngs-link {
+  display: flex;
+  align-items: center;
+  white-space: pre;
+  color: var(--ngs-accent);
+  text-decoration: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ngs-link:hover { text-decoration: underline; }
+
+.ngs-disabled { opacity: 0.5; }
+
+.ngs-frame {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  max-width: none;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--ngs-fg);
+  background: var(--ngs-panel);
+  border: 1px solid var(--ngs-border);
+  border-radius: calc(var(--ngs-radius) + 2px);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
+}
+.ngs-frame::backdrop { background: rgba(0, 0, 0, 0.45); }
+.ngs-frame.ngs-frame-blur::backdrop { backdrop-filter: blur(4px); }
+.ngs-frame-header {
+  background: rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid var(--ngs-border);
+  cursor: move;
+  user-select: none;
+}
+.ngs-frame-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 19px;
+  line-height: 1;
+  background: transparent;
+  border-color: transparent;
+  cursor: pointer;
+}
+.ngs-frame-close:hover { background: #c94a4a; }
+.ngs-painted > .ngs-frame-header { background: none; border-color: transparent; }
+
+.ngs-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  color: var(--ngs-fg);
+  background: var(--ngs-panel);
+  border: 1px solid var(--ngs-border);
+  border-radius: var(--ngs-radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.ngs-menu:not(:popover-open) { display: none !important; }
+.ngs-menu-option {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 6px 10px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  white-space: pre;
+  background: none;
+  border: 0;
+  border-radius: calc(var(--ngs-radius) - 2px);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ngs-menu-option:hover, .ngs-menu-option:focus-visible { background: var(--ngs-accent); color: #fff; outline: none; }
+.ngs-menu-option:disabled { opacity: 0.45; background: none; cursor: default; }
+.ngs-menu-parent::after { content: "\203A"; margin-left: auto; padding-left: 18px; opacity: 0.7; }
+.ngs-menu-spacer { height: 1px; margin: 4px 6px; background: var(--ngs-border); }
+
+#ngs-errors {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(720px, calc(100vw - 24px));
+}
+.ngs-error {
+  position: relative;
+  padding: 8px 34px 8px 10px;
+  background: #2a1214;
+  color: #ffb4b4;
+  border: 1px solid #7a2a30;
+  border-radius: 6px;
+  font: 12px/1.45 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 40vh;
+  overflow: auto;
+  cursor: pointer;
+}
+.ngs-error[data-count]::after {
+  content: attr(data-count);
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  color: #ff8080;
+}

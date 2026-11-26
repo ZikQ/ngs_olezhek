@@ -1,0 +1,6 @@
+{
+  "runtime.version": "Lua 5.4",
+  "workspace.library": ["runtime/types"],
+  "workspace.ignoreDir": ["target", "runtime/types"],
+  "workspace.checkThirdParty": false
+}
