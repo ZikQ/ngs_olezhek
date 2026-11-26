@@ -24,8 +24,10 @@ margin margin-top margin-right margin-bottom margin-left
 width height min-width min-height max-width max-height aspect-ratio
 gap row-gap column-gap flex flex-grow flex-shrink flex-basis order align-self justify-self z-index
 font-size font-weight font-style font-family letter-spacing line-height word-spacing
+font-variant-numeric font-feature-settings font-variation-settings font-optical-sizing
 text-align text-decoration text-transform text-indent white-space word-break overflow-wrap
 user-select pointer-events object-fit object-position
+caret-color accent-color scrollbar-width scrollbar-color
 ]])
 
 local UNITLESS = set_of("opacity z-index font-weight line-height flex flex-grow flex-shrink order scale aspect-ratio")
@@ -51,6 +53,9 @@ local function check(v)
     end
     return v
 end
+
+-- ui.SetSkin/ui.SetVars values end up inside styles through var(), so they get the same check.
+R.css_check = check
 
 local function px(v)
     if type(v) == "number" then return v .. "px" end

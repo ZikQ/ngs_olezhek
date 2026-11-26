@@ -15,7 +15,7 @@ local function encode_body(body)
 end
 
 -- JSON responses come back as tables, anything else as a string.
--- Non-2xx and network failures give nil plus { status, message, body }.
+-- Non-2xx and network failures give nil plus { status, message, body, fields? }.
 local function result(status, body, ctype, neterr, shell)
     if neterr then return nil, { status = 0, message = neterr } end
     -- The server's SPA fallback answered: the endpoint does not exist.
@@ -26,7 +26,23 @@ local function result(status, body, ctype, neterr, shell)
         if ok then value = v end
     end
     if status >= 200 and status < 300 then return value end
-    return nil, { status = status, message = type(value) == "string" and value or ("HTTP " .. status), body = value }
+    local err = { status = status, message = type(value) == "string" and value or ("HTTP " .. status), body = value }
+    -- FieldErrors from the server: { message?, errors = { field = { "msg", ... } } }.
+    if type(value) == "table" then
+        if type(value.message) == "string" then err.message = value.message end
+        if type(value.errors) == "table" then
+            err.fields = value.errors
+            if type(value.message) ~= "string" then
+                local lines = {}
+                for name, list in pairs(value.errors) do
+                    lines[#lines + 1] = name .. ": " .. tostring(type(list) == "table" and list[1] or list)
+                end
+                table.sort(lines)
+                err.message = table.concat(lines, "\n")
+            end
+        end
+    end
+    return nil, err
 end
 
 local function header_table(url, ctype, extra)
@@ -52,12 +68,20 @@ local function header_table(url, ctype, extra)
     return out
 end
 
-local function start(method, url, body, opts, owner)
+local function start(method, url, body, opts, owner, input, field)
     opts = opts or {}
     url = tostring(url)
     local payload, ctype = encode_body(body)
     local req = setmetatable({ method = method, url = url, done = false, invalidate = opts.invalidate }, Request)
-    req.op = N.fetch(method, url, payload, header_table(url, ctype, opts.headers))
+    local headers = header_table(url, ctype, opts.headers)
+    if input then
+        for name in pairs(headers) do
+            if name:lower() == "content-type" then headers[name] = nil end
+        end
+        req.op = N.upload(input.__id, url, field or "file", headers)
+    else
+        req.op = N.fetch(method, url, payload, headers)
+    end
     R.on_op(req.op, function(status, text, rctype, neterr, shell)
         req.status, req.text = status, text
         req:__finish(result(status, text, rctype, neterr, shell))
@@ -83,6 +107,8 @@ function Request:__finish(value, err)
     if self.owner then self.owner:RemoveCallOnRemove(self) end
     self.value, self.err = value, err
     if not err and self.invalidate then http.Invalidate(self.invalidate) end
+    -- One place to send the user to a login page when the server's Auth<T> says no.
+    if err and err.status == 401 and R.same_origin(self.url) then hook.Run("Unauthorized", self.url, err) end
     R.op_done(self, value, err)
 end
 
@@ -127,6 +153,15 @@ function http.Post(url, body, opts) return wait(start("POST", url, body, opts, R
 function http.Put(url, body, opts) return wait(start("PUT", url, body, opts, R.owner())) end
 function http.Patch(url, body, opts) return wait(start("PATCH", url, body, opts, R.owner())) end
 function http.Delete(url, body, opts) return wait(start("DELETE", url, body, opts, R.owner())) end
+
+--- Upload the current selection as multipart/form-data. Shares timeout, cancellation and response handling.
+function http.Upload(url, input, field, opts)
+    assert(coroutine.isyieldable(), "use http.Upload in a handler")
+    if not IsValid(input) then return nil, {status = 0, message = "expected a file input"} end
+    local ok, req = pcall(start, "POST", url, nil, opts, R.owner(), input, field)
+    if not ok then return nil, {status = 0, message = tostring(req)} end
+    return req:Wait()
+end
 
 --- Callback style, usable anywhere: onSuccess(value), onFailure(message, err). Returns the request.
 function http.Fetch(url, onSuccess, onFailure, method, body, opts)

@@ -5,13 +5,18 @@ local PAGE = {}
 local NAV = {
     { "Главная", "/" },
     { "Профиль", "/profile/1" },
+    { "Формы", "/forms" },
     { "Paint", "/paint" },
     { "Виджеты", "/widgets" },
     { "Возможности", "/features" },
+    { "Компоненты", "/library" },
+    { "Набор", "/kit" },
+    { "Безопасность", "/security" },
     { "Нет такой", "/nowhere" },
 }
 
-function PAGE:Initialize()
+local Layout = {}
+function Layout:Initialize()
     local header = ui.Create("Row", self)
     header:Dock(DOCK_TOP)
     header:SetTall(54)
@@ -30,6 +35,14 @@ function PAGE:Initialize()
         link:SetURL(item[2])
     end
 
+    local outlet = self:Add("Panel")
+    outlet:Dock(DOCK_FILL)
+    self:SetOutlet(outlet)
+end
+ui.Register("AppLayout", Layout, "Panel")
+
+PAGE.Layout = "AppLayout"
+function PAGE:Initialize()
     self.Content = ui.Create("ScrollPanel", self)
     self.Content:Dock(DOCK_FILL)
     self.Content:DockPadding(24, 20, 24, 24)

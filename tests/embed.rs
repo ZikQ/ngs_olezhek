@@ -81,3 +81,21 @@ async fn dev_falls_back_to_embedded_when_folder_is_gone() {
     assert!(b.dev);
     assert_eq!(names(&b), ["only.lua"]);
 }
+
+#[tokio::test]
+async fn lazy_bytecode_is_served_separately_in_dev_and_embedded_release() {
+    for dev in [false, true] {
+        let router = App::new().dev(dev).lua(include_lua!("examples/hello/lua")).into_router().unwrap();
+        let get = |path| {
+            router.clone().oneshot(Request::get(path).body(Body::empty()).unwrap())
+        };
+        let startup = get("/_ngs/bundle").await.unwrap();
+        let b = Bundle::decode(&to_bytes(startup.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert!(b.entries.iter().any(|e| e.name == "lazy/index.lua"));
+        assert!(b.entries.iter().filter(|e| e.name.starts_with("lazy/")).all(|e| e.kind == Kind::Deferred && e.data.is_empty()));
+        let chunk = get("/_ngs/page/index.lua").await.unwrap();
+        let b = Bundle::decode(&to_bytes(chunk.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(names(&b), ["lazy/index.lua"]);
+        assert_eq!(get("/_ngs/page/missing.lua").await.unwrap().status(), 404);
+    }
+}

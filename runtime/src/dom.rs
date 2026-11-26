@@ -5,12 +5,11 @@ use omnilua::{Lua, Result, Value};
 use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
 use web_sys::{
     CanvasRenderingContext2d, CssStyleRule, CssStyleSheet, Document, Element, EventTarget, HtmlCanvasElement,
-    HtmlElement, HtmlStyleElement, ResizeObserver, ResizeObserverEntry, Text, Window,
+    HtmlElement, HtmlLinkElement, ResizeObserver, ResizeObserverEntry, Text, Window,
 };
 
 use crate::err;
 
-const STYLE: &str = include_str!("../style.css");
 const ID_ATTR: &str = "data-ngs";
 
 pub struct Entry {
@@ -69,19 +68,12 @@ fn element(id: u32) -> Result<HtmlElement> {
     with(id, |e| e.el.clone())
 }
 
-fn target(id: u32) -> Result<HtmlElement> {
+pub(crate) fn target(id: u32) -> Result<HtmlElement> {
     with(id, |e| e.target().clone())
 }
 
 pub fn set_dev(dev: bool) {
     DOM.with(|d| d.borrow_mut().dev = dev);
-}
-
-pub fn install_style() {
-    let doc = document();
-    let style = doc.create_element("style").unwrap();
-    style.set_text_content(Some(STYLE));
-    doc.head().unwrap().append_child(&style).unwrap();
 }
 
 pub fn panel_id(target: &EventTarget) -> Option<u32> {
@@ -342,9 +334,8 @@ fn rules_sheet() -> Result<CssStyleSheet> {
         return Ok(s);
     }
     let doc = document();
-    let el: HtmlStyleElement = doc.create_element("style").map_err(js)?.unchecked_into();
-    el.set_id("ngs-rules");
-    doc.head().ok_or_else(|| err("no <head>"))?.append_child(&el).map_err(js)?;
+    let el: HtmlLinkElement = doc.get_element_by_id("ngs-style")
+        .ok_or_else(|| err("missing runtime stylesheet"))?.unchecked_into();
     let sheet: CssStyleSheet = el.sheet().ok_or_else(|| err("no stylesheet"))?.unchecked_into();
     DOM.with(|d| d.borrow_mut().rules = Some(sheet.clone()));
     Ok(sheet)
@@ -420,9 +411,11 @@ pub fn canvas(id: u32, w: f64, h: f64) -> Result<CanvasRenderingContext2d> {
     Ok(ctx)
 }
 
-/// Console always; in dev also an on-screen list, GMod-style, with repeats collapsed into a counter.
+/// Console always; in dev also an on-screen list, GMod-style, with repeats collapsed into a counter;
+/// in release a report to the server unless the app turned that off.
 pub fn report_error(msg: &str) {
     web_sys::console::error_1(&msg.into());
+    crate::report::push(msg);
     let Some(list) = DOM.with(|d| {
         let mut d = d.borrow_mut();
         if !d.dev {

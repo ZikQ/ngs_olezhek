@@ -8,7 +8,7 @@ use wasm_bindgen::JsValue;
 
 use crate::{args::Args, dom, events, json, net, paint};
 
-fn reg<A, R, F>(lua: &Lua, t: &Table, name: &str, f: F) -> Result<()>
+pub(crate) fn reg<A, R, F>(lua: &Lua, t: &Table, name: &str, f: F) -> Result<()>
 where
     A: FromLuaMulti + 'static,
     R: IntoLuaMulti + 'static,
@@ -27,6 +27,8 @@ pub fn create(lua: &Lua) -> Result<Table> {
     dom_natives(lua, &n)?;
     paint_natives(lua, &n)?;
     platform_natives(lua, &n)?;
+    crate::browser::register(lua, &n)?;
+    crate::sandbox::register(lua, &n)?;
     Ok(n)
 }
 
@@ -93,6 +95,19 @@ fn paint_natives(lua: &Lua, n: &Table) -> Result<()> {
     )?;
     reg(lua, n, "circle", |_, Args((x, y, r, fill)): Args<(f64, f64, f64, bool)>| paint::circle(x, y, r, fill))?;
     reg(lua, n, "poly", |_, verts: Table| paint::poly(verts))?;
+    reg(lua, n, "gradient", |_, Args((x1, y1, x2, y2, stops)): Args<(f64, f64, f64, f64, Vec<f64>)>| {
+        paint::gradient(x1, y1, x2, y2, stops)
+    })?;
+    reg(lua, n, "line_width", |_, w: f64| paint::line_width(w))?;
+    reg(lua, n, "line_cap", |_, cap: String| paint::line_cap(&cap))?;
+    reg(lua, n, "line_join", |_, join: String| paint::line_join(&join))?;
+    reg(lua, n, "line_dash", |_, pattern: Vec<f64>| paint::line_dash(pattern))?;
+    reg(lua, n, "arc", |_, Args((x, y, r, from, to, fill)): Args<(f64, f64, f64, f64, f64, bool)>| {
+        paint::arc(x, y, r, from, to, fill)
+    })?;
+    reg(lua, n, "path", |_, Args((d, mode, x, y, sx, sy)): Args<(String, String, f64, f64, f64, f64)>| {
+        paint::path(&d, &mode, x, y, sx, sy)
+    })?;
     reg(lua, n, "draw_text", |_, (s, x, y): (String, f64, f64)| paint::draw_text(&s, x, y))?;
     reg(lua, n, "measure", |_, (s, font): (String, String)| paint::measure(&s, &font))?;
     reg(lua, n, "image_load", |_, url: String| paint::image_load(&url))?;
@@ -137,7 +152,7 @@ fn platform_natives(lua: &Lua, n: &Table) -> Result<()> {
     })?;
     type FetchArgs = Args<(String, String, Opt, Option<HashMap<String, String>>)>;
     reg(lua, n, "fetch", |_, Args((method, url, body, headers)): FetchArgs| {
-        Ok(net::fetch(method, url, body, headers.unwrap_or_default()))
+        Ok(net::fetch(method, url, body.map(JsValue::from), headers.unwrap_or_default()))
     })?;
     reg(lua, n, "abort", |_, op: u32| {
         net::abort(op);
@@ -155,13 +170,13 @@ fn platform_natives(lua: &Lua, n: &Table) -> Result<()> {
     })?;
     reg(lua, n, "location", |_, ()| Ok(events::location()))?;
     reg(lua, n, "origin", |_, ()| dom::window().location().origin().map_err(dom::js))?;
-    reg(lua, n, "push_state", |_, url: String| {
-        dom::window().history().map_err(dom::js)?.push_state_with_url(&JsValue::NULL, "", Some(&url)).map_err(dom::js)
-    })?;
-    reg(lua, n, "replace_state", |_, url: String| {
-        dom::window().history().map_err(dom::js)?.replace_state_with_url(&JsValue::NULL, "", Some(&url)).map_err(dom::js)
-    })?;
+    if events::history_index()?.is_none() { events::set_history(None, false)?; }
+    reg(lua, n, "history_index", |_, ()| events::history_index())?;
+    reg(lua, n, "history_go", |_, delta: i32| dom::window().history().map_err(dom::js)?.go_with_delta(delta).map_err(dom::js))?;
+    reg(lua, n, "push_state", |_, url: String| events::set_history(Some(&url), true))?;
+    reg(lua, n, "replace_state", |_, url: String| events::set_history(Some(&url), false))?;
     reg(lua, n, "back", |_, ()| dom::window().history().map_err(dom::js)?.back().map_err(dom::js))?;
+    reg(lua, n, "document_title", |_, ()| Ok(dom::document().title()))?;
     reg(lua, n, "title", |_, s: String| {
         dom::document().set_title(&s);
         Ok(())
@@ -187,10 +202,7 @@ fn storage_natives(lua: &Lua, n: &Table) -> Result<()> {
         Ok(storage(session).is_some_and(|s| s.set_item(&key, &value).is_ok()))
     })?;
     reg(lua, n, "storage_remove", |_, (key, session): (String, bool)| {
-        if let Some(s) = storage(session) {
-            let _ = s.remove_item(&key);
-        }
-        Ok(())
+        Ok(storage(session).is_some_and(|s| s.remove_item(&key).is_ok()))
     })?;
     reg(lua, n, "storage_keys", |_, session: bool| {
         let Some(s) = storage(session) else { return Ok(Vec::new()) };

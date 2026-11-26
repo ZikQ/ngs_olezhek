@@ -101,6 +101,68 @@ end
 --- verts: { {x = 0, y = 0}, {x = 10, y = 0}, ... }
 function surface.DrawPoly(verts) N.poly(verts) end
 
+--- Linear gradient for the following fills and strokes until the next SetDrawColor.
+--- stops: { Color, Color, ... } evenly spaced, or { {0, Color}, {0.7, Color}, ... } with offsets 0..1.
+function surface.SetDrawGradient(x1, y1, x2, y2, stops)
+    if type(stops) ~= "table" or #stops < 2 then error("SetDrawGradient: need at least two stops", 2) end
+    local flat, n = {}, #stops
+    for i, s in ipairs(stops) do
+        local offset, c
+        if IsColor(s) then
+            offset, c = (i - 1) / (n - 1), s
+        else
+            offset, c = s[1], s[2]
+        end
+        if type(offset) ~= "number" or not IsColor(c) then
+            error("SetDrawGradient: stop " .. i .. " must be a Color or { offset, Color }", 2)
+        end
+        local base = #flat
+        flat[base + 1], flat[base + 2], flat[base + 3], flat[base + 4], flat[base + 5] = offset, c.r, c.g, c.b, c.a or 255
+    end
+    N.gradient(x1, y1, x2, y2, flat)
+end
+
+local CAPS = { butt = true, round = true, square = true }
+local JOINS = { miter = true, round = true, bevel = true }
+
+function surface.SetLineWidth(w) N.line_width(tonumber(w) or 1) end
+
+function surface.SetLineCap(cap)
+    cap = cap or "butt"
+    if not CAPS[cap] then error("SetLineCap: expected 'butt', 'round' or 'square', got " .. tostring(cap), 2) end
+    N.line_cap(cap)
+end
+
+function surface.SetLineJoin(join)
+    join = join or "miter"
+    if not JOINS[join] then error("SetLineJoin: expected 'miter', 'round' or 'bevel', got " .. tostring(join), 2) end
+    N.line_join(join)
+end
+
+--- pattern: { dash, gap, ... } in pixels; nil or {} draws solid lines again.
+function surface.SetLineDash(pattern)
+    local list = {}
+    for i, v in ipairs(pattern or {}) do
+        if type(v) ~= "number" or v < 0 then error("SetLineDash: entries must be non-negative numbers", 2) end
+        list[i] = v
+    end
+    N.line_dash(list)
+end
+
+--- Degrees, 0 points right and angles grow clockwise. fill = true draws a pie slice instead of a stroke.
+function surface.DrawArc(x, y, radius, from, to, fill) N.arc(x, y, radius, from, to, fill == true) end
+
+local PATH_MODES = { fill = true, stroke = true, both = true }
+
+--- d: SVG path data. The geometry is scaled and then moved by x, y; line width is not scaled.
+function surface.DrawPath(d, mode, x, y, sx, sy)
+    if type(d) ~= "string" then error("DrawPath: path data must be a string", 2) end
+    mode = mode or "fill"
+    if not PATH_MODES[mode] then error("DrawPath: mode must be 'fill', 'stroke' or 'both', got " .. tostring(mode), 2) end
+    sx = sx or 1
+    N.path(d, mode, x or 0, y or 0, sx, sy or sx)
+end
+
 function surface.SetMaterial(mat) material = mat end
 
 function surface.DrawTexturedRect(x, y, w, h)

@@ -77,7 +77,8 @@ function N.css_rule(selector, decls) M.rules[#M.rules + 1] = { selector = select
 
 for _, name in ipairs({
     "capture", "focus", "blur", "scroll_into_view", "observe", "canvas_begin", "canvas_end", "color",
-    "text_color", "font", "alpha", "rect", "outlined", "line", "rounded", "circle", "poly", "draw_text",
+    "text_color", "font", "alpha", "rect", "outlined", "line", "rounded", "circle", "poly",
+    "gradient", "line_width", "line_cap", "line_join", "line_dash", "arc", "path",
     "load_font", "image", "image_uv", "think", "log", "back",
 }) do
     N[name] = function() end
@@ -85,6 +86,8 @@ end
 
 function N.has_focus() return false end
 function N.measure(s) return #s * 7, 14 end
+-- Like the canvas native: draws nothing here, but returns the width the text pen advances by.
+function N.draw_text(s) return #s * 7 end
 function N.image_load() return 1 end
 function N.image_size() return 0, 0 end
 function N.now() return M.now end
@@ -106,17 +109,95 @@ function N.fetch(method, url, body, headers)
     return M.next_op
 end
 
+function N.files(id) return el(id).files or {} end
+function N.upload(id, url, field, headers)
+    if #N.files(id) == 0 then error("no files selected") end
+    local op = N.fetch("POST", url, nil, headers)
+    M.fetches[#M.fetches].field = field
+    return op
+end
+
+function N.load_page(file)
+    M.next_op = M.next_op + 1
+    M.chunkOp = M.next_op
+    return M.next_op
+end
+
+M.cookies = {}
+function N.set_cookie(s) M.cookies[#M.cookies + 1] = s end
+function N.cookies() return "" end
+
 function N.abort(op) M.aborted[op] = true end
+
+M.meta, M.dark, M.clipboard, M.clip_ops, M.streams = {}, false, nil, {}, {}
+function N.meta(name, content) M.meta[name] = content end
+function N.dark() return M.dark end
+
+-- Browser wall clock: M.clock at page start plus the fake page time. M.tz is seconds east of UTC
+-- or a function(unix) for zones with DST.
+M.clock, M.tz, M.focused, M.visible = 1795718460, 0, true, true
+function N.clock() return M.clock + M.now end
+function N.tz_offset(unix)
+    if type(M.tz) == "function" then return M.tz(unix) end
+    return M.tz
+end
+function N.focused() return M.focused end
+function N.visible() return M.visible end
+
+function N.clipboard(text)
+    M.next_op = M.next_op + 1
+    M.clip_ops[#M.clip_ops + 1] = { op = M.next_op, text = text }
+    return M.next_op
+end
+
+--- Settles clipboard reads and writes started so far.
+function M.flush_clipboard()
+    local ops = M.clip_ops
+    M.clip_ops = {}
+    for _, c in ipairs(ops) do
+        if c.text ~= nil then M.clipboard = c.text end
+        M.R.op_done(c.op, c.text or M.clipboard or "")
+    end
+    return #ops > 0
+end
+
+function N.connect(url, sse)
+    M.next_op = M.next_op + 1
+    M.streams[M.next_op] = { id = M.next_op, url = url, sse = sse, sent = {}, closed = false }
+    return M.next_op
+end
+
+function N.send(id, text)
+    local s = M.streams[id]
+    if not s or s.closed or s.sse then error("expected an open WebSocket") end
+    s.sent[#s.sent + 1] = text
+end
+
+function N.disconnect(id)
+    if M.streams[id] then M.streams[id].closed = true end
+end
 function N.error(s) M.errors[#M.errors + 1] = s end
 function N.location() return M.path, M.query end
 function N.origin() return M.origin end
 
-function N.push_state(url)
+local function change_url(url)
     M.path = url:match("^[^?#]*")
     M.query = url:match("%?([^#]*)") or ""
 end
 
-N.replace_state = N.push_state
+function N.resolve_url(url)
+    if url == "" then url = M.path .. (M.query ~= "" and "?" .. M.query or "") end
+    return url:match("^[^?#]*"), url:match("%?([^#]*)") or "", url
+end
+M.historyIndex = 0
+N.replace_state = change_url
+function N.push_state(url)
+    M.historyIndex = M.historyIndex + 1
+    change_url(url)
+end
+function N.history_index() return M.historyIndex end
+function N.history_go(delta) M.historyDelta = delta end
+function N.document_title() return M.title or "" end
 function N.title(s) M.title = s end
 function N.open(url) M.opened[#M.opened + 1] = url end
 
@@ -128,7 +209,11 @@ function N.storage_set(key, value, session)
     return true
 end
 
-function N.storage_remove(key, session) M.storage[session][key] = nil end
+function N.storage_remove(key, session)
+    if M.storage_broken then return false end
+    M.storage[session][key] = nil
+    return true
+end
 
 function N.storage_keys(session)
     local out = {}

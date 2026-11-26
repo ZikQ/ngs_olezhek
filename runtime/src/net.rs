@@ -42,11 +42,15 @@ pub async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
 
 /// Starts a request and returns an op id; the result arrives later in `R.op_done`.
 /// The id is returned before the request can complete, so Lua always registers the waiter first.
-pub fn fetch(method: String, url: String, body: Option<String>, headers: HashMap<String, String>) -> u32 {
-    let op = NEXT_OP.with(|n| {
+pub fn next_op() -> u32 {
+    NEXT_OP.with(|n| {
         n.set(n.get() + 1);
         n.get()
-    });
+    })
+}
+
+pub fn fetch(method: String, url: String, body: Option<JsValue>, headers: HashMap<String, String>) -> u32 {
+    let op = next_op();
     let signal = AbortController::new().ok().map(|c| {
         let signal = c.signal();
         ABORTS.with(|a| a.borrow_mut().insert(op, c));
@@ -74,7 +78,7 @@ pub fn abort(op: u32) {
 async fn request(
     method: &str,
     url: &str,
-    body: Option<String>,
+    body: Option<JsValue>,
     headers: &HashMap<String, String>,
     signal: Option<&AbortSignal>,
 ) -> Result<Reply, String> {
@@ -87,7 +91,7 @@ async fn request(
     }
     init.set_headers(&h);
     if let Some(b) = body {
-        init.set_body(&JsValue::from_str(&b));
+        init.set_body(&b);
     }
     if let Some(s) = signal {
         init.set_signal(Some(s));

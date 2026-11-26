@@ -42,7 +42,7 @@ pub fn watch(dir: PathBuf) -> Updates {
                 .filter_map(|(name, path)| Some(Entry::compile(&lua, &name, &fs::read(path).ok()?, false)))
                 .collect();
             if !entries.is_empty() {
-                let _ = sender.send(Arc::new(Bundle { dev: true, entries }.encode()));
+                let _ = sender.send(Arc::new(Bundle { dev: true, report_errors: false, entries }.encode()));
             }
         }
     });

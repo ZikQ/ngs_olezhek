@@ -131,6 +131,9 @@ pub fn install() {
         }
     });
     listen(&doc, "pointerover", |e| set_hovered(target_id(&e)));
+    listen_capture(&doc, "scroll", |e| {
+        if let Some(id) = target_id(&e) { dispatch(id, "scroll", Value::Nil); }
+    });
     listen_capture(&doc, "cancel", |e| {
         if let Some(id) = target_id(&e)
             && dispatch(id, "cancel", Value::Nil)
@@ -179,6 +182,28 @@ pub fn install() {
         let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
         crate::call::<()>("screen", (size(w.inner_width()), size(w.inner_height())));
     });
+}
+
+const HISTORY_INDEX: &str = "ngsIndex";
+
+pub fn history_index() -> omnilua::Result<Option<i32>> {
+    let state = dom::window().history().map_err(dom::js)?.state().map_err(dom::js)?;
+    Ok(Reflect::get(&state, &HISTORY_INDEX.into()).ok().and_then(|v| v.as_f64()).map(|v| v as i32))
+}
+
+pub fn set_history(url: Option<&str>, push: bool) -> omnilua::Result<()> {
+    let history = dom::window().history().map_err(dom::js)?;
+    let index = history_index()?.unwrap_or(0) + i32::from(push);
+    let state = js_sys::Object::new();
+    if !push {
+        let previous = history.state().map_err(dom::js)?;
+        if previous.is_object() {
+            js_sys::Object::assign(&state, previous.unchecked_ref());
+        }
+    }
+    Reflect::set(&state, &HISTORY_INDEX.into(), &index.into()).map_err(dom::js)?;
+    if push { history.push_state_with_url(&state, "", url) }
+    else { history.replace_state_with_url(&state, "", url) }.map_err(dom::js)
 }
 
 pub fn location() -> (String, String) {

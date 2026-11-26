@@ -1,6 +1,9 @@
 ---@diagnostic disable: duplicate-set-field
 local N, R = ...
 
+-- lockdown.lua removes the global debug table once the prelude has loaded.
+local debug_traceback = debug.traceback
+
 local function join(...)
     local parts = {}
     for i = 1, select("#", ...) do
@@ -44,7 +47,7 @@ local waiting = {}
 local owners = setmetatable({}, { __mode = "k" })
 
 local function report(co, err)
-    N.error(debug.traceback(co, tostring(err)))
+    N.error(debug_traceback(co, tostring(err)))
 end
 
 local function park(key, w)
@@ -125,7 +128,7 @@ function R.op_done(key, ...)
 end
 
 local function traceback(err)
-    return debug.traceback(tostring(err), 2)
+    return debug_traceback(tostring(err), 2)
 end
 
 --- Synchronous protected call for Paint/PerformLayout/Think: errors are reported, not raised.

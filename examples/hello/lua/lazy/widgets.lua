@@ -34,7 +34,6 @@ ui.Register("CursorPad", PAD, "Panel")
 
 ---@class WidgetsPage: DefaultPage
 local PAGE = {}
-PAGE.Route = "/widgets"
 PAGE.Title = "Виджеты"
 
 function PAGE:Initialize()
@@ -125,6 +124,36 @@ function PAGE:Initialize()
         menu:Open()
     end
 
+    local pops = self:AddSection("Popover: любое содержимое рядом с кнопкой")
+    local prow = ui.Create("Row", pops, { Gap = 10, Align = ALIGN_CENTER })
+    local picked = ui.Create("Label", pops, { Text = " ", TextColor = Color(154, 160, 170) })
+
+    local pick = ui.Create("Button", prow, { Text = "Выбрать день" })
+    local calendar = ui.Create("Popover", prow)
+    calendar:SetGap(8)
+    ui.Create("Label", calendar, { Text = "Ноябрь", Font = "DefaultBold" })
+    local days = ui.Create("Grid", calendar, { Columns = { 32, 32, 32, 32, 32, 32, 32 }, Gap = 4 })
+    for d = 1, 30 do
+        ui.Create("Button", days, {
+            Text = d,
+            Size = { 32, 32 },
+            Style = { fontVariantNumeric = "tabular-nums", padding = 0 },
+            DoClick = function()
+                picked:SetText("Выбран день: " .. d)
+                calendar:Hide()
+            end,
+        })
+    end
+    pick.DoClick = function() calendar:Toggle(pick) end
+
+    local filter = ui.Create("Button", prow, { Text = "Фильтр справа" })
+    local checks = ui.Create("Popover", prow)
+    checks:SetSide("right")
+    checks:SetGap(10)
+    for _, name in ipairs({ "Tip", "Subscription", "PPV", "Message" }) do
+        ui.Create("CheckBox", checks, { Text = name, Checked = true })
+    end
+    filter.DoClick = function() checks:Toggle(filter) end
     local cursor = self:AddSection("LocalCursorPos и OnCursorMoved")
     ui.Create("CursorPad", cursor)
 
@@ -149,4 +178,4 @@ function PAGE:Initialize()
     self:Hook("OnFontLoaded", refresh)
 end
 
-ui.Register("WidgetsPage", PAGE, "DefaultPage")
+return ui.Register("WidgetsPage", PAGE, "DefaultPage")

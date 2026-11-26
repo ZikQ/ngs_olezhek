@@ -1,4 +1,5 @@
 mod args;
+mod browser;
 mod dom;
 mod events;
 mod json;
@@ -6,6 +7,8 @@ mod live;
 mod natives;
 mod net;
 mod paint;
+mod report;
+mod sandbox;
 
 use std::{cell::RefCell, fmt::Display};
 
@@ -16,13 +19,23 @@ use wasm_bindgen::prelude::*;
 const PRELUDE: &[(&str, &str)] = &[
     ("base", include_str!("../lua/base.lua")),
     ("ui", include_str!("../lua/ui.lua")),
+    ("state", include_str!("../lua/state.lua")),
     ("style", include_str!("../lua/style.lua")),
     ("attrs", include_str!("../lua/attrs.lua")),
     ("controls", include_str!("../lua/controls.lua")),
     ("surface", include_str!("../lua/surface.lua")),
     ("http", include_str!("../lua/http.lua")),
     ("storage", include_str!("../lua/storage.lua")),
+    ("browser", include_str!("../lua/browser.lua")),
+    ("date", include_str!("../lua/date.lua")),
+    ("widgets", include_str!("../lua/widgets.lua")),
+    ("kit", include_str!("../lua/kit.lua")),
+    ("charts", include_str!("../lua/charts.lua")),
+    ("calendar", include_str!("../lua/calendar.lua")),
+    ("form", include_str!("../lua/form.lua")),
     ("router", include_str!("../lua/router.lua")),
+    ("sandbox", include_str!("../lua/sandbox.lua")),
+    ("lockdown", include_str!("../lua/lockdown.lua")),
 ];
 
 thread_local! {
@@ -55,7 +68,10 @@ pub(crate) fn call<R: FromLuaMulti>(name: &str, args: impl IntoLuaMulti) -> Opti
 
 #[wasm_bindgen(start)]
 pub fn start() {
-    std::panic::set_hook(Box::new(|info| web_sys::console::error_1(&info.to_string().into())));
+    std::panic::set_hook(Box::new(|info| {
+        web_sys::console::error_1(&info.to_string().into());
+        report::panic(&format!("panic: {info}"));
+    }));
     wasm_bindgen_futures::spawn_local(async {
         if let Err(e) = boot().await {
             dom::report_error(&format!("ngs runtime: {e}"));
@@ -64,10 +80,12 @@ pub fn start() {
 }
 
 async fn boot() -> Result<(), String> {
-    dom::install_style();
     let bytes = net::fetch_bytes("/_ngs/bundle").await?;
     let bundle = Bundle::decode(&bytes)?;
     dom::set_dev(bundle.dev);
+    if bundle.report_errors && !bundle.dev {
+        report::enable();
+    }
 
     let lua = Lua::new();
     let s = |e: omnilua::Error| e.to_string();
@@ -92,6 +110,7 @@ async fn boot() -> Result<(), String> {
                 Ok(f) => t.set("fn", f),
                 Err(e) => t.set("err", e.to_string()),
             },
+            Kind::Deferred => t.set("deferred", true),
             Kind::Error => t.set("err", String::from_utf8_lossy(&entry.data).into_owned()),
         }
         .map_err(s)?;

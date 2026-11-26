@@ -3,7 +3,9 @@ use std::{cell::RefCell, collections::HashMap, f64::consts::TAU};
 use omnilua::{Result, Table};
 use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{CanvasRenderingContext2d, FontFace, FontFaceDescriptors, HtmlCanvasElement, HtmlImageElement};
+use web_sys::{
+    CanvasRenderingContext2d, FontFace, FontFaceDescriptors, HtmlCanvasElement, HtmlImageElement, Path2d,
+};
 
 use crate::{dom, dom::js, err};
 
@@ -12,9 +14,9 @@ const WHITE: &str = "rgba(255,255,255,1)";
 struct State {
     panel: u32,
     ctx: CanvasRenderingContext2d,
-    color: String,
     text_color: String,
     font: String,
+    line_width: f64,
 }
 
 #[derive(Default)]
@@ -43,10 +45,15 @@ pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> String {
 
 pub fn begin(panel: u32, w: f64, h: f64, font: String) -> Result<()> {
     let ctx = dom::canvas(panel, w, h)?;
+    // The context outlives a single Paint, so everything a previous Paint could have changed is reset.
     ctx.set_fill_style_str(WHITE);
     ctx.set_stroke_style_str(WHITE);
     ctx.set_font(&font);
-    PAINT.with(|p| *p.borrow_mut() = Some(State { panel, ctx, color: WHITE.into(), text_color: WHITE.into(), font }));
+    ctx.set_line_width(1.0);
+    ctx.set_line_cap("butt");
+    ctx.set_line_join("miter");
+    ctx.set_line_dash(&js_sys::Array::new()).map_err(js)?;
+    PAINT.with(|p| *p.borrow_mut() = Some(State { panel, ctx, text_color: WHITE.into(), font, line_width: 1.0 }));
     Ok(())
 }
 
@@ -56,10 +63,44 @@ pub fn end() {
 
 pub fn color(r: f64, g: f64, b: f64, a: f64) -> Result<()> {
     with(|s| {
-        s.color = rgba(r, g, b, a);
-        s.ctx.set_fill_style_str(&s.color);
-        s.ctx.set_stroke_style_str(&s.color);
+        let color = rgba(r, g, b, a);
+        s.ctx.set_fill_style_str(&color);
+        s.ctx.set_stroke_style_str(&color);
     })
+}
+
+/// `stops` is flat: offset, r, g, b, a for every stop.
+pub fn gradient(x1: f64, y1: f64, x2: f64, y2: f64, stops: Vec<f64>) -> Result<()> {
+    with(|s| -> std::result::Result<(), JsValue> {
+        let g = s.ctx.create_linear_gradient(x1, y1, x2, y2);
+        for st in stops.chunks_exact(5) {
+            g.add_color_stop(st[0].clamp(0.0, 1.0) as f32, &rgba(st[1], st[2], st[3], st[4]))?;
+        }
+        s.ctx.set_fill_style_canvas_gradient(&g);
+        s.ctx.set_stroke_style_canvas_gradient(&g);
+        Ok(())
+    })?
+    .map_err(js)
+}
+
+pub fn line_width(w: f64) -> Result<()> {
+    with(|s| {
+        s.line_width = w.max(0.0);
+        s.ctx.set_line_width(s.line_width);
+    })
+}
+
+pub fn line_cap(cap: &str) -> Result<()> {
+    with(|s| s.ctx.set_line_cap(cap))
+}
+
+pub fn line_join(join: &str) -> Result<()> {
+    with(|s| s.ctx.set_line_join(join))
+}
+
+pub fn line_dash(pattern: Vec<f64>) -> Result<()> {
+    let arr: js_sys::Array = pattern.into_iter().map(JsValue::from_f64).collect();
+    with(|s| s.ctx.set_line_dash(&arr))?.map_err(js)
 }
 
 pub fn text_color(r: f64, g: f64, b: f64, a: f64) -> Result<()> {
@@ -93,11 +134,60 @@ pub fn outlined(x: f64, y: f64, w: f64, h: f64, t: f64) -> Result<()> {
 
 pub fn line(x1: f64, y1: f64, x2: f64, y2: f64) -> Result<()> {
     with(|s| {
+        // Odd whole widths centered on a pixel edge would smear over two pixel rows.
+        let w = s.line_width;
+        let off = if w.fract() == 0.0 && (w as i64) % 2 == 1 { 0.5 } else { 0.0 };
         s.ctx.begin_path();
-        s.ctx.set_line_width(1.0);
-        s.ctx.move_to(x1 + 0.5, y1 + 0.5);
-        s.ctx.line_to(x2 + 0.5, y2 + 0.5);
+        s.ctx.move_to(x1 + off, y1 + off);
+        s.ctx.line_to(x2 + off, y2 + off);
         s.ctx.stroke();
+    })
+}
+
+/// Angles in degrees, 0 pointing right, growing clockwise (screen y goes down).
+pub fn arc(x: f64, y: f64, r: f64, from: f64, to: f64, fill: bool) -> Result<()> {
+    let (a0, a1) = (from.to_radians(), to.to_radians());
+    with(|s| -> std::result::Result<(), JsValue> {
+        s.ctx.begin_path();
+        if fill {
+            s.ctx.move_to(x, y);
+        }
+        s.ctx.arc_with_anticlockwise(x, y, r.max(0.0), a0, a1, a1 < a0)?;
+        if fill {
+            s.ctx.close_path();
+            s.ctx.fill();
+        } else {
+            s.ctx.stroke();
+        }
+        Ok(())
+    })?
+    .map_err(js)
+}
+
+/// SVG path data (`M 2 3 L 10 4 Z`, arcs and curves included). The offset and scale move the
+/// geometry only, so line width stays in panel pixels whatever the scale.
+pub fn path(d: &str, mode: &str, x: f64, y: f64, sx: f64, sy: f64) -> Result<()> {
+    let parsed = Path2d::new_with_path_string(d).map_err(js)?;
+    let shape = if (x, y, sx, sy) == (0.0, 0.0, 1.0, 1.0) {
+        parsed
+    } else {
+        // web-sys types addPath's matrix as SVGMatrix, but the browser takes a plain DOMMatrix2DInit dict.
+        let m = js_sys::Object::new();
+        for (k, v) in [("a", sx), ("b", 0.0), ("c", 0.0), ("d", sy), ("e", x), ("f", y)] {
+            js_sys::Reflect::set(&m, &k.into(), &v.into()).map_err(js)?;
+        }
+        let moved = Path2d::new().map_err(js)?;
+        let add: js_sys::Function = js_sys::Reflect::get(&moved, &"addPath".into()).map_err(js)?.unchecked_into();
+        add.call2(&moved, &parsed, &m).map_err(js)?;
+        moved
+    };
+    with(|s| {
+        if mode != "stroke" {
+            s.ctx.fill_with_path_2d(&shape);
+        }
+        if mode != "fill" {
+            s.ctx.stroke_with_path(&shape);
+        }
     })
 }
 
@@ -156,12 +246,15 @@ pub fn poly(verts: Table) -> Result<()> {
 /// Text is placed by its top edge (as in GMod) using the font's ascent, so `y..y+h`
 /// from `measure` is exactly the box it occupies. Returns the drawn width.
 pub fn draw_text(text: &str, x: f64, y: f64) -> Result<f64> {
-    let (ctx, font, text_color, color) = with(|s| (s.ctx.clone(), s.font.clone(), s.text_color.clone(), s.color.clone()))?;
+    let (ctx, font, text_color) = with(|s| (s.ctx.clone(), s.font.clone(), s.text_color.clone()))?;
     let (ascent, _) = metrics(&ctx, &font)?;
+    // save/restore rather than re-setting the draw color: the fill may be a gradient.
+    ctx.save();
     ctx.set_fill_style_str(&text_color);
     ctx.set_text_baseline("alphabetic");
-    ctx.fill_text(text, x, y + ascent).map_err(js)?;
-    ctx.set_fill_style_str(&color);
+    let drawn = ctx.fill_text(text, x, y + ascent).map_err(js);
+    ctx.restore();
+    drawn?;
     Ok(ctx.measure_text(text).map_err(js)?.width())
 }
 

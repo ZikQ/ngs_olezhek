@@ -1,0 +1,18 @@
+test("profile shows the user from the API", function(t)
+    t.Go("/profile/1")
+    t.Respond("GET /api/users/1", { id = 1, name = "Олежек", role = "admin" })
+    t.Get({ Class = "Label", Text = "Олежек" })
+    assert(t.HasText("admin"))
+end)
+
+test("missing user shows the error", function(t)
+    t.Serve("GET /api/users/{id}", function(_, params) return 404, "пользователя " .. params.id .. " нет" end)
+    t.Go("/profile/9")
+    assert(t.HasText("Ошибка 404"), t.Text())
+    assert(t.HasText("пользователя 9 нет"))
+end)
+
+test("unknown paths render the app's 404 page", function(t)
+    t.Go("/nowhere")
+    t.Eq(t.Page().ClassName, "NotFoundPage")
+end)

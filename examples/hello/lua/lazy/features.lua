@@ -19,7 +19,6 @@ ui.Register("AccentBadge", BADGE, "Label")
 
 ---@class FeaturesPage: DefaultPage
 local PAGE = {}
-PAGE.Route = "/features"
 PAGE.Title = "Возможности"
 
 local ACCENTS = {
@@ -84,4 +83,4 @@ function PAGE:Initialize()
     })
 end
 
-ui.Register("FeaturesPage", PAGE, "DefaultPage")
+return ui.Register("FeaturesPage", PAGE, "DefaultPage")

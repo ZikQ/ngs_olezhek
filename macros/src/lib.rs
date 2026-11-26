@@ -1,4 +1,5 @@
 mod embed;
+mod lua_type;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -49,6 +50,14 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn include_lua(input: TokenStream) -> TokenStream {
     embed::include_lua(input.into()).unwrap_or_else(|e| e.to_compile_error()).into()
+}
+
+/// LuaLS-аннотации (`---@class`, `---@alias`) для JSON-формы типа с учётом атрибутов serde.
+/// В dev-режиме они попадают в `<lua>/.ngs/api.lua`. `#[lua(type = "...")]` задаёт тип поля руками,
+/// `#[lua(skip)]` прячет поле, `#[lua(optional)]` помечает его необязательным.
+#[proc_macro_derive(LuaType, attributes(lua, serde))]
+pub fn derive_lua_type(input: TokenStream) -> TokenStream {
+    lua_type::derive(input.into()).unwrap_or_else(|e| e.to_compile_error()).into()
 }
 
 /// `routes![a, b, users::c]` собирает `axum::Router` из обработчиков с `#[get]`/`#[post]`/...

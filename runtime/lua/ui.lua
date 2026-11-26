@@ -162,13 +162,16 @@ local UNPACK = {
     Gradient = true, Overflow = true, Gap = true, DockMargin = true, DockPadding = true, Transition = true,
 }
 local PLAIN_METHODS = { Dock = true, DockMargin = true, DockPadding = true }
+R.UNPACK = UNPACK
 
 local function apply_props(self, props)
     for k, v in pairs(props) do
         if type(k) == "string" and k ~= "Slot" then
             local setter = PLAIN_METHODS[k] and self[k] or self["Set" .. k]
             if type(setter) == "function" then
-                if UNPACK[k] and type(v) == "table" and getmetatable(v) == nil then
+                if not PLAIN_METHODS[k] and ui.IsState(v) then
+                    self:Bind(k, v)
+                elseif UNPACK[k] and type(v) == "table" and getmetatable(v) == nil then
                     setter(self, table.unpack(v))
                 else
                     setter(self, v)
@@ -451,6 +454,7 @@ end
 function R.event(id, name, arg)
     local p = panels[id]
     if not p then return false end
+    if p.__tipBuild then R.tooltip_event(p, name, arg) end
     local h = p["__on_" .. name]
     if not h then return false end
     return h(p, arg) == true
@@ -466,25 +470,84 @@ local SKIN = {
     textMuted = "--ngs-muted",
     panel = "--ngs-panel",
     accent = "--ngs-accent",
+    danger = "--ngs-danger",
     border = "--ngs-border",
     input = "--ngs-input",
     button = "--ngs-button",
     buttonHover = "--ngs-button-hover",
     radius = "--ngs-radius",
+    success = "--ngs-success",
+    warning = "--ngs-warning",
+    onAccent = "--ngs-on-accent",
 }
+R.SKIN = SKIN
+
+local function css_value(fn, k, v)
+    if IsColor(v) then return R.css_color(v) end
+    if type(v) == "number" then return v .. "px" end
+    if type(v) ~= "string" then error(fn .. ": '" .. tostring(k) .. "' must be a Color, number or string", 3) end
+    local ok, err = pcall(R.css_check, v)
+    if not ok then error(fn .. ": '" .. tostring(k) .. "': " .. err, 3) end
+    return v
+end
+
+-- Canvases do not follow CSS variables, so every Paint panel has to redraw with the new colors.
+local function skin_changed()
+    for _, p in pairs(R.panels) do
+        if p.Paint then p:InvalidatePaint() end
+    end
+    hook.Run("OnSkinChanged")
+end
+
+local skin_values = {}
 
 function ui.SetSkin(t)
     for k, v in pairs(t) do
         local var = SKIN[k]
         if not var then error("ui.SetSkin: unknown key '" .. tostring(k) .. "'", 2) end
-        if IsColor(v) then
-            v = R.css_color(v)
-        elseif type(v) == "number" then
-            v = v .. "px"
-        end
-        N.css_var(var, tostring(v))
+        N.css_var(var, css_value("ui.SetSkin", k, v))
+        skin_values[k] = v
     end
+    skin_changed()
 end
+
+--- What ui.SetSkin last set for the key; nil while the stylesheet default is in effect.
+function ui.GetSkin(key) return skin_values[key] end
+
+local vars = {}
+
+local function var_name(fn, name)
+    if type(name) ~= "string" or not name:match("^%a[%w%-]*$") then
+        error(fn .. ": variable name must be letters, digits and '-', starting with a letter, got " .. tostring(name), 3)
+    end
+    return "--app-" .. name
+end
+
+--- Declares app CSS variables: ui.SetVars({ surface2 = Color(...), radiusCard = 12 }). false removes one.
+--- Styles refer to them through ui.Var(name), so a theme switch is one SetVars call.
+function ui.SetVars(t)
+    for k, v in pairs(t) do
+        local var = var_name("ui.SetVars", k)
+        if v == false then
+            N.css_var(var, "")
+            vars[k] = nil
+        else
+            N.css_var(var, css_value("ui.SetVars", k, v))
+            vars[k] = v
+        end
+    end
+    skin_changed()
+end
+
+--- The value given to ui.SetVars (a Color stays a Color, so Paint can draw with it).
+function ui.GetVar(name, default)
+    local v = vars[name]
+    if v == nil then return default end
+    return v
+end
+
+--- "var(--app-<name>)" for SetStyle, SetBackgroundColor, state styles and gradients.
+function ui.Var(name) return "var(" .. var_name("ui.Var", name) .. ")" end
 
 local PANEL = { __native = { tag = "div", class = "ngs-panel" } }
 
@@ -577,6 +640,8 @@ function PANEL:RemoveCallOnRemove(name)
 end
 
 local HOOKS, TIMERS = {}, {}
+-- Panel-owned resources a Rebuild drops with the old Initialize: CallOnRemove key -> field.
+R.scoped = { [HOOKS] = "__hooks", [TIMERS] = "__timers" }
 
 --- hook.Add that lives as long as the panel. fn gets the hook arguments; a string calls that
 --- method on the panel. One hook per event and name; the name is optional.
@@ -717,14 +782,14 @@ function PANEL:Rebuild()
     self.__gen = (rawget(self, "__gen") or 0) + 1
     for i = #self.__children, 1, -1 do self.__children[i]:Remove() end
     local on_remove = rawget(self, "__on_remove")
-    for _, key in ipairs({ HOOKS, TIMERS }) do
+    for key, field in pairs(R.scoped) do
         local fn = on_remove and on_remove[key]
         if fn then
             on_remove[key] = nil
             fn(self)
         end
+        rawset(self, field, nil)
     end
-    self.__hooks, self.__timers = nil, nil
     initialize(self, chain(self.__class))
 end
 
@@ -969,9 +1034,16 @@ end
 function PANEL:GetAlpha() return self.__alpha or 255 end
 function PANEL:SetZPos(z) N.style(self.__id, "z-index", tostring(z)) end
 
+-- A string here is a CSS color such as ui.Var("surface"), checked like any SetStyle value.
+local function color_css(c)
+    if c == nil then return nil end
+    if type(c) == "string" then return R.css_check(c) end
+    return R.css_color(c)
+end
+
 function PANEL:SetBackgroundColor(c)
     self.__bg = c
-    N.style(self.__id, "background-color", c and R.css_color(c) or nil)
+    N.style(self.__id, "background-color", color_css(c))
 end
 
 function PANEL:GetBackgroundColor() return self.__bg end
@@ -991,7 +1063,7 @@ function PANEL:GetFont() return self.__font or "Default" end
 
 function PANEL:SetTextColor(c)
     self.__fg = c
-    N.style(self.__id, "color", c and R.css_color(c) or nil)
+    N.style(self.__id, "color", color_css(c))
 end
 
 function PANEL:GetTextColor() return self.__fg end

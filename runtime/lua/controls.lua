@@ -9,7 +9,7 @@ local function spawn(self, method, ...)
     if fn then return R.spawn_for(self, fn, self, ...) end
 end
 
-local Label = { __native = { tag = "span", class = "ngs-label" } }
+local Label = { __native = { tag = "span", class = "ngs-label" }, BindDefault = "Text" }
 
 function Label:SetText(s)
     s = s == nil and "" or tostring(s)
@@ -25,7 +25,7 @@ ui.Register("Label", Label, "Panel")
 
 ui.Register("Button", { __native = { tag = "button", class = "ngs-button" } }, "Label")
 
-local TextEntry = { __native = { tag = "div", class = "ngs-textentry", control = "input", type = "text" } }
+local TextEntry = { __native = { tag = "div", class = "ngs-textentry", control = "input", type = "text" }, BindDefault = "Value" }
 
 function TextEntry:SetValue(v) N.prop(self.__id, "value", v == nil and "" or tostring(v)) end
 function TextEntry:GetValue() return N.get_prop(self.__id, "value") or "" end
@@ -84,6 +84,7 @@ end
 function TextEntry:SetNumeric(b) self:SetInputType(b and "number" or "text") end
 
 function TextEntry:__on_input()
+    R.input_changed(self, "Value", self:GetValue())
     spawn(self, "OnChange")
     spawn(self, "OnValueChange", self:GetValue())
 end
@@ -95,7 +96,7 @@ end
 
 ui.Register("TextEntry", TextEntry, "Panel")
 
-local CheckBox = { __native = { tag = "label", class = "ngs-checkbox", control = "input", type = "checkbox" } }
+local CheckBox = { __native = { tag = "label", class = "ngs-checkbox", control = "input", type = "checkbox" }, BindDefault = "Checked" }
 
 function CheckBox:SetChecked(b) N.prop(self.__id, "checked", b == true) end
 function CheckBox:GetChecked() return N.get_prop(self.__id, "checked") == true end
@@ -110,11 +111,16 @@ end
 -- A click on the label text also produces a synthetic click on the input; use OnChange instead.
 function CheckBox:__on_click() end
 
-function CheckBox:__on_change() spawn(self, "OnChange", self:GetChecked()) end
+function CheckBox:__on_change()
+    local on = self:GetChecked()
+    R.input_changed(self, "Checked", on)
+    R.input_changed(self, "Value", on)
+    spawn(self, "OnChange", on)
+end
 
 ui.Register("CheckBox", CheckBox, "Label")
 
-local ComboBox = { __native = { tag = "div", class = "ngs-combobox", control = "select" } }
+local ComboBox = { __native = { tag = "div", class = "ngs-combobox", control = "select" }, BindDefault = "Value" }
 
 function ComboBox:Initialize() self.__choices = {} end
 
@@ -158,13 +164,15 @@ function ComboBox:GetOptionData(i) return self.__choices[i] and self.__choices[i
 function ComboBox:__on_change()
     local i = self:GetSelectedID()
     local c = i and self.__choices[i]
-    if c then spawn(self, "OnSelect", i, c.text, c.data) end
+    if not c then return end
+    R.input_changed(self, "Value", c.text)
+    spawn(self, "OnSelect", i, c.text, c.data)
 end
 
 ui.Register("ComboBox", ComboBox, "Panel")
 
 local function number_input(class, ty)
-    local T = { __native = { tag = "div", class = class, control = "input", type = ty } }
+    local T = { __native = { tag = "div", class = class, control = "input", type = ty }, BindDefault = "Value" }
 
     function T:SetMin(v)
         self.__min = v
@@ -192,7 +200,10 @@ local function number_input(class, ty)
     function T:SetValue(v) N.prop(self.__id, "value", tostring(v)) end
     function T:GetValue() return tonumber(N.get_prop(self.__id, "value")) or 0 end
 
-    function T:__on_input() spawn(self, "OnValueChanged", self:GetValue()) end
+    function T:__on_input()
+        R.input_changed(self, "Value", self:GetValue())
+        spawn(self, "OnValueChanged", self:GetValue())
+    end
 
     return T
 end
@@ -207,7 +218,7 @@ end
 ui.Register("Slider", Slider, "Panel")
 ui.Register("NumberWang", number_input("ngs-numberwang", "number"), "Panel")
 
-local ProgressBar = { __native = { tag = "div", class = "ngs-progress", control = "progress" } }
+local ProgressBar = { __native = { tag = "div", class = "ngs-progress", control = "progress" }, BindDefault = "Fraction" }
 
 function ProgressBar:Initialize() N.prop(self.__id, "max", 1) end
 
@@ -220,7 +231,7 @@ function ProgressBar:GetFraction() return self.__fraction or 0 end
 
 ui.Register("ProgressBar", ProgressBar, "Panel")
 
-local Image = { __native = { tag = "img", class = "ngs-image" } }
+local Image = { __native = { tag = "img", class = "ngs-image" }, BindDefault = "Image" }
 
 function Image:SetImage(src)
     if src ~= nil then
@@ -297,7 +308,7 @@ end
 
 -- The header is positioned, not docked, so the frame's own children flow normally
 -- (or dock) inside the padding below it, like DFrame.
-local Frame = { __native = { tag = "dialog", class = "ngs-frame" } }
+local Frame = { __native = { tag = "dialog", class = "ngs-frame" }, BindDefault = "Title" }
 
 function Frame:Initialize()
     self.__fixed = true
@@ -530,11 +541,148 @@ ui.Register("MenuOption", MenuOption, "Label")
 
 function ui.Menu(parent) return ui.Create("Menu", parent) end
 
-local Page = { __native = { tag = "main", class = "ngs-page" } }
+-- A Menu takes only options; this is the same top-layer popover for any content.
+local Popover = { __native = { tag = "div", class = "ngs-popover" } }
+
+local SIDES = { bottom = true, top = true, left = true, right = true }
+local ALIGNS = { start = true, center = true, ["end"] = true }
+
+function Popover:Initialize()
+    self.__fixed = true
+    self.__side, self.__align, self.__gap = "bottom", "start", 6
+    self.__keep = true
+    N.attr(self.__id, "popover", "auto")
+    N.attr(self.__id, "role", "dialog")
+    self:Hook("OnScreenSizeChanged", "ngs-popover", function()
+        if self.__open then self:__place() end
+    end)
+end
+
+function Popover:SetSide(side)
+    if not SIDES[side] then error("Popover:SetSide: expected bottom, top, left or right, got " .. tostring(side), 2) end
+    self.__side = side
+end
+
+function Popover:SetAlign(align)
+    if not ALIGNS[align] then error("Popover:SetAlign: expected start, center or end, got " .. tostring(align), 2) end
+    self.__align = align
+end
+
+function Popover:SetGap(px) self.__gap = tonumber(px) or 0 end
+
+--- Popover at least as wide as the anchor, for select-like lists.
+function Popover:SetMatchAnchorWidth(b) self.__match = b == true end
+
+--- false: Esc and outside clicks no longer close it, only Hide does.
+function Popover:SetAutoClose(b)
+    N.attr(self.__id, "popover", b == false and "manual" or "auto")
+end
+
+--- Popovers are reused by default (date pickers, dropdowns); true removes it after it closes.
+function Popover:SetDeleteSelf(b) self.__keep = not b end
+
+function Popover:IsOpen() return self.__open == true end
+function Popover:GetAnchor() return self.__anchor end
+
+local function inside(p, ancestor)
+    while p do
+        if p == ancestor then return true end
+        p = p.__parent
+    end
+    return false
+end
+
+--- Open(anchorPanel) next to the anchor, or Open(x, y) at window coordinates.
+function Popover:Open(a, y)
+    if ui.IsPanel(a) then
+        self.__anchor, self.__at = a, nil
+    else
+        if not a then a, y = gui.MousePos() end
+        self.__anchor, self.__at = nil, { a, y }
+    end
+    -- Outside a modal dialog everything is inert, so the popover has to move into it.
+    local modal = R.modals[#R.modals]
+    if modal and not inside(self, modal) then self:SetParent(modal) end
+    if not self.__open then
+        self.__open = true
+        N.invoke(self.__id, "showPopover")
+        self:__place()
+        if self.OnOpen then R.spawn(self.OnOpen, self) end
+    else
+        self:__place()
+    end
+end
+
+--- Light dismiss closes the popover on pointerup, right before the anchor's own click would
+--- reopen it; Toggle swallows that click so a button can open and close the same popover.
+function Popover:Toggle(anchor)
+    if self.__open then return self:Hide() end
+    if anchor and anchor == self.__last_anchor and self.__closed_at and CurTime() - self.__closed_at < 0.3 then
+        return
+    end
+    self:Open(anchor)
+end
+
+function Popover:Hide()
+    if not self.__open then return end
+    N.invoke(self.__id, "hidePopover")
+    self:__closed()
+end
+
+function Popover:__closed()
+    if not self.__open then return end
+    self.__open = false
+    self.__closed_at = CurTime()
+    self.__last_anchor = self.__anchor
+    if self.OnClose then R.pcall(self.OnClose, self) end
+    if not self.__keep then self:Remove() end
+end
+
+function Popover:__on_toggle(open)
+    if not open then self:__closed() end
+end
+
+function Popover:__place()
+    local sw, sh = N.screen()
+    local anchor = self.__anchor
+    if anchor and not IsValid(anchor) then return self:Hide() end
+    if anchor and self.__match then
+        local _, _, aw = anchor:GetScreenBounds()
+        N.style(self.__id, "min-width", aw .. "px")
+    end
+    local _, _, w, h = N.bounds(self.__id)
+    local x, y
+    if anchor then
+        local ax, ay, aw, ah = anchor:GetScreenBounds()
+        local side, align, gap = self.__side, self.__align, self.__gap
+        if side == "bottom" and ay + ah + gap + h > sh and ay - gap - h >= 0 then side = "top"
+        elseif side == "top" and ay - gap - h < 0 and ay + ah + gap + h <= sh then side = "bottom"
+        elseif side == "right" and ax + aw + gap + w > sw and ax - gap - w >= 0 then side = "left"
+        elseif side == "left" and ax - gap - w < 0 and ax + aw + gap + w <= sw then side = "right" end
+        local function along(start, size, own)
+            if align == "center" then return start + (size - own) / 2 end
+            if align == "end" then return start + size - own end
+            return start
+        end
+        if side == "bottom" then x, y = along(ax, aw, w), ay + ah + gap
+        elseif side == "top" then x, y = along(ax, aw, w), ay - gap - h
+        elseif side == "right" then x, y = ax + aw + gap, along(ay, ah, h)
+        else x, y = ax - gap - w, along(ay, ah, h) end
+    else
+        x, y = self.__at[1], self.__at[2]
+    end
+    x = math.max(4, math.min(x, sw - w - 4))
+    y = math.max(4, math.min(y, sh - h - 4))
+    self:SetPos(x, y)
+end
+
+ui.Register("Popover", Popover, "Panel")
+
+local Page = { __native = { tag = "main", class = "ngs-page" }, BindDefault = "Title" }
 
 function Page:SetTitle(t)
     self.__title = t
-    N.title(t)
+    if R.page == self then N.title(t) end
 end
 
 function Page:GetTitle() return self.__title or self.Title end

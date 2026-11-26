@@ -18,6 +18,8 @@ pub enum Kind {
     Chunk,
     /// The file failed to compile; `data` holds the message. Shipped so the client can show it.
     Error,
+    /// Startup index entry. Only the logical filename is sent.
+    Deferred,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +30,10 @@ pub struct Entry {
 }
 
 impl Entry {
+    pub fn deferred(name: &str) -> Self {
+        Self { name: name.into(), kind: Kind::Deferred, data: Vec::new() }
+    }
+
     pub fn compile(lua: &Lua, name: &str, source: &[u8], strip: bool) -> Entry {
         let compiled = lua
             .load(source)
@@ -58,17 +64,24 @@ impl Entry {
 
 pub struct Bundle {
     pub dev: bool,
+    /// The client sends Lua errors to `/_ngs/errors`.
+    pub report_errors: bool,
     pub entries: Vec<Entry>,
 }
 
 impl Bundle {
     pub fn from_dir(dir: &Path, dev: bool, strip: bool) -> io::Result<Bundle> {
+        Self::from_dir_matching(dir, dev, strip, |_| true)
+    }
+
+    /// Filter by the collected logical name before reading or compiling source.
+    pub fn from_dir_matching(dir: &Path, dev: bool, strip: bool, include: impl Fn(&str) -> bool) -> io::Result<Bundle> {
         let lua = Lua::new();
         let mut entries = Vec::new();
-        for (name, path) in collect(dir)? {
+        for (name, path) in collect(dir)?.into_iter().filter(|(name, _)| include(name)) {
             entries.push(Entry::compile(&lua, &name, &fs::read(path)?, strip));
         }
-        Ok(Bundle { dev, entries })
+        Ok(Bundle { dev, report_errors: false, entries })
     }
 
     pub fn errors(&self) -> Vec<String> {
@@ -81,12 +94,13 @@ impl Bundle {
         let mut out = Vec::with_capacity(10 + size);
         out.extend_from_slice(MAGIC);
         out.push(VERSION);
-        out.push(self.dev as u8);
+        out.push(self.dev as u8 | (self.report_errors as u8) << 1);
         out.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
         for e in &self.entries {
             out.push(match e.kind {
                 Kind::Chunk => 0,
                 Kind::Error => 1,
+                Kind::Deferred => 2,
             });
             out.extend_from_slice(&(e.name.len() as u16).to_le_bytes());
             out.extend_from_slice(e.name.as_bytes());
@@ -105,18 +119,24 @@ impl Bundle {
         if version != VERSION {
             return Err(format!("unsupported bundle version {version}"));
         }
-        let dev = r.u8()? & 1 != 0;
+        let flags = r.u8()?;
+        let (dev, report_errors) = (flags & 1 != 0, flags & 2 != 0);
         let count = r.u32()? as usize;
         let mut entries = Vec::with_capacity(count.min(4096));
         for _ in 0..count {
-            let kind = if r.u8()? == 0 { Kind::Chunk } else { Kind::Error };
+            let kind = match r.u8()? {
+                0 => Kind::Chunk,
+                1 => Kind::Error,
+                2 => Kind::Deferred,
+                _ => return Err("unknown bundle entry kind".into()),
+            };
             let name_len = r.u16()? as usize;
             let name = String::from_utf8_lossy(r.take(name_len)?).into_owned();
             let data_len = r.u32()? as usize;
             let data = r.take(data_len)?.to_vec();
             entries.push(Entry { name, kind, data });
         }
-        Ok(Bundle { dev, entries })
+        Ok(Bundle { dev, report_errors, entries })
     }
 }
 
@@ -193,13 +213,14 @@ mod tests {
         let lua = Lua::new();
         let bundle = Bundle {
             dev: true,
+            report_errors: true,
             entries: vec![
                 Entry::compile(&lua, "autorun/a.lua", b"return 1", false),
                 Entry::compile(&lua, "pages/broken.lua", b"return 1 +", false),
             ],
         };
         let decoded = Bundle::decode(&bundle.encode()).unwrap();
-        assert!(decoded.dev);
+        assert!(decoded.dev && decoded.report_errors);
         assert_eq!(decoded.entries.len(), 2);
         assert_eq!(decoded.entries[0].kind, Kind::Chunk);
         assert_eq!(decoded.entries[0].data, bundle.entries[0].data);
@@ -221,7 +242,7 @@ mod tests {
     #[test]
     fn truncated_bundle_is_rejected() {
         let lua = Lua::new();
-        let bytes = Bundle { dev: false, entries: vec![Entry::compile(&lua, "a.lua", b"return 1", true)] }.encode();
+        let bytes = Bundle { dev: false, report_errors: false, entries: vec![Entry::compile(&lua, "a.lua", b"return 1", true)] }.encode();
         assert!(Bundle::decode(&bytes[..bytes.len() - 1]).is_err());
     }
 }

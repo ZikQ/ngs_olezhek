@@ -7,13 +7,14 @@ local N, R = ...
 local PREFIX = "ngs:"
 
 local function make(session)
-    local memory = {}
+    local memory, removed = {}, {}
     local s = {}
 
     function s.Get(key, default)
         key = PREFIX .. tostring(key)
-        local raw = N.storage_get(key, session)
-        if raw == nil then raw = memory[key] end
+        local raw = memory[key]
+        if raw == removed then return default end
+        if raw == nil then raw = N.storage_get(key, session) end
         if raw == nil then return default end
         local ok, v = pcall(N.json_decode, raw)
         if ok and v ~= nil then return v end
@@ -24,9 +25,9 @@ local function make(session)
     function s.Set(key, value)
         key = PREFIX .. tostring(key)
         if value == nil then
-            memory[key] = nil
-            N.storage_remove(key, session)
-            return true
+            local ok = N.storage_remove(key, session)
+            memory[key] = not ok and removed or nil
+            return ok
         end
         local raw = N.json_encode(value)
         if N.storage_set(key, raw, session) then
@@ -37,18 +38,18 @@ local function make(session)
         return false
     end
 
-    function s.Remove(key) s.Set(key, nil) end
+    function s.Remove(key) return s.Set(key, nil) end
 
     function s.Keys()
         local out, seen = {}, {}
         for _, k in ipairs(N.storage_keys(session)) do
-            if k:sub(1, #PREFIX) == PREFIX then
+            if k:sub(1, #PREFIX) == PREFIX and memory[k] ~= removed then
                 seen[k] = true
                 out[#out + 1] = k:sub(#PREFIX + 1)
             end
         end
         for k in pairs(memory) do
-            if not seen[k] then out[#out + 1] = k:sub(#PREFIX + 1) end
+            if not seen[k] and memory[k] ~= removed then out[#out + 1] = k:sub(#PREFIX + 1) end
         end
         table.sort(out)
         return out

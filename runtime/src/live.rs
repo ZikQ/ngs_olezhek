@@ -58,6 +58,7 @@ fn apply(bytes: &[u8]) {
                 }
                 Err(e) => dom::report_error(&e.to_string()),
             },
+            Kind::Deferred => (),
             Kind::Error => dom::report_error(&String::from_utf8_lossy(&entry.data)),
         }
     }

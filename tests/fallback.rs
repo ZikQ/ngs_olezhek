@@ -98,3 +98,29 @@ async fn custom_api_prefix() {
     let res = router.oneshot(get_req("/api/x", &[("accept", "text/html")])).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK, "/api is a page path once the prefix moved");
 }
+
+#[tokio::test]
+async fn security_policy_covers_shell_assets_api_and_errors() {
+    for path in ["/", "/_ngs/style.css", "/_ngs/runtime_bg.wasm", "/api/ping", "/_ngs/missing"] {
+        let response = router().oneshot(get_req(path, &[])).await.unwrap();
+        let h = response.headers();
+        let csp = h["content-security-policy"].to_str().unwrap();
+        assert!(csp.contains("frame-ancestors 'none'") && csp.contains("'wasm-unsafe-eval'"));
+        assert!(csp.contains(env!("NGS_BOOT_HASH")) && !csp.contains("'unsafe-inline'"));
+        assert_eq!(h["x-content-type-options"], "nosniff");
+        assert_eq!(h["x-frame-options"], "DENY");
+        assert_eq!(h["strict-transport-security"], "max-age=31536000");
+        assert_eq!(h["referrer-policy"], "strict-origin-when-cross-origin");
+        if path == "/_ngs/style.css" { assert_eq!(h["content-type"], "text/css; charset=utf-8"); }
+    }
+}
+
+#[tokio::test]
+async fn initial_metadata_is_escaped_and_visible_without_javascript() {
+    let app = App::new().dev(false).lua(include_lua!("tests/fixtures/lua"))
+        .meta("og:title", r#"A "quoted" title"#).meta("description", "<example>");
+    let res = app.into_router().unwrap().oneshot(get_req("/", &[])).await.unwrap();
+    let html = String::from_utf8(to_bytes(res.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+    assert!(html.contains(r#"property="og:title" content="A &quot;quoted&quot; title""#));
+    assert!(html.contains(r#"name="description" content="&lt;example&gt;""#));
+}

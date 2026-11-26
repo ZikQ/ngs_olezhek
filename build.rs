@@ -8,6 +8,7 @@ const WASM_BINDGEN_VERSION: &str = "0.2.129";
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    write_boot_script(&manifest);
     for p in ["runtime/src", "runtime/lua", "runtime/style.css", "runtime/Cargo.toml", "bundle/src", "bundle/Cargo.toml"] {
         println!("cargo:rerun-if-changed={}", manifest.join(p).display());
     }
@@ -39,6 +40,20 @@ fn main() {
     if env::var("PROFILE").as_deref() == Ok("release") {
         optimize(&out.join("runtime_bg.wasm"));
     }
+}
+
+// The HTML parser turns CRLF into LF before CSP hashes an inline script, so a checkout with
+// autocrlf would otherwise ship a hash that never matches.
+fn write_boot_script(manifest: &Path) {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let src = manifest.join("src/bootstrap.js");
+    println!("cargo:rerun-if-changed={}", src.display());
+    let script = fs::read_to_string(&src).unwrap().replace("\r\n", "\n").replace('\r', "\n");
+    let script = script.trim_end();
+    fs::write(PathBuf::from(env::var("OUT_DIR").unwrap()).join("bootstrap.js"), script).unwrap();
+    let hash = Sha256::digest(script.as_bytes());
+    println!("cargo:rustc-env=NGS_BOOT_HASH={}", base64::engine::general_purpose::STANDARD.encode(hash));
 }
 
 fn build_wasm(manifest: &Path, target_dir: &Path) {

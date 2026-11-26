@@ -1,6 +1,5 @@
 ---@class ProfilePage: DefaultPage
 local PAGE = {}
-PAGE.Route = "/profile/{id}"
 
 function PAGE:Initialize()
     local title = ui.Create("Label", self.Content)
@@ -49,4 +48,4 @@ function PAGE:Initialize()
     next_link:SetURL("/profile/" .. (user.id + 1))
 end
 
-ui.Register("ProfilePage", PAGE, "DefaultPage")
+return ui.Register("ProfilePage", PAGE, "DefaultPage")

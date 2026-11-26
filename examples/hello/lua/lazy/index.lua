@@ -1,6 +1,6 @@
 ---@class HomePage: DefaultPage
 local PAGE = {}
-PAGE.Route = "/"
+PAGE.KeepAlive = true
 PAGE.Title = "Главная"
 
 function PAGE:Initialize()
@@ -8,47 +8,39 @@ function PAGE:Initialize()
     title:SetFont("Big")
     title:SetText("Фронтенд на Lua")
 
-    local form = self:AddSection("Форма (нативные button / input / select)")
-    form:SetMaxSize(460)
+    local section = self:AddSection("Форма: проверка на клиенте и ошибки полей от сервера (422)")
+    section:SetMaxSize(460)
 
-    local name = ui.Create("TextEntry", form)
-    name:SetPlaceholderText("Новое имя для пользователя 1")
-
-    local role = ui.Create("ComboBox", form)
+    local form = ui.Create("Form", section)
+    form:SetAction("POST", "/api/users/1/rename", { invalidate = "/api/users" })
+    form:AddField("name", "TextEntry", { Label = "Имя", Required = true, PlaceholderText = "Новое имя для пользователя 1",
+        Hint = "Сервер не примет «admin» и имена длиннее 20 символов" })
+    local role = form:AddField("role", "ComboBox", { Label = "Роль" })
     role:AddChoice("Игрок", "player", true)
     role:AddChoice("Админ", "admin")
+    form:AddField("remember", "CheckBox", { Text = "Запомнить меня" })
+    form:AddSubmit("Сохранить")
 
-    local remember = ui.Create("CheckBox", form)
-    remember:SetText("Запомнить меня")
-
-    local volume = ui.Create("Slider", form)
-    local progress = ui.Create("ProgressBar", form)
+    local volume = ui.Create("Slider", section)
+    local progress = ui.Create("ProgressBar", section)
     progress:SetFraction(0.5)
     volume:SetValue(50)
     function volume:OnValueChanged(v) progress:SetFraction(v / 100) end
 
-    local status = ui.Create("Label", form)
+    local status = ui.Create("Label", section)
     status:SetTextColor(Color(154, 160, 170))
     status:SetText(" ")
 
-    local save = ui.Create("Button", form)
-    save:SetText("Сохранить")
-    save.DoClick = function()
-        save:SetEnabled(false)
-        local user, err = http.Post("/api/users/1/rename", { name = name:GetValue() }, { invalidate = "/api/users" })
-        save:SetEnabled(true)
-        if err then
-            status:SetText("Ошибка " .. err.status .. ": " .. err.message)
-            return
-        end
-        local _, role_id = role:GetSelected()
-        status:SetText(string.format("Сохранено: %s, роль %s, запомнить: %s", user.name, role_id, tostring(remember:GetChecked())))
+    ---@param user User
+    function form:OnSuccess(user)
+        local values = self:GetValues()
+        status:SetText(string.format("Сохранено: %s, роль %s, запомнить: %s", user.name, user.role, tostring(values.remember)))
     end
-    name.OnEnter = save.DoClick
 
     local search = self:AddSection("Поиск: запрос прямо в обработчике, предыдущий отменяется")
     search:SetMaxSize(460)
     local query = ui.Create("TextEntry", search)
+    query:SetName("search")
     query:SetPlaceholderText("Начни печатать имя")
     local results = ui.Create("Column", search)
     results:SetGap(4)
@@ -89,4 +81,4 @@ function PAGE:Initialize()
     end
 end
 
-ui.Register("HomePage", PAGE, "DefaultPage")
+return ui.Register("HomePage", PAGE, "DefaultPage")
